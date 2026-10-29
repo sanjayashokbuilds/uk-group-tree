@@ -1,5 +1,6 @@
 """Walk Companies House PSC records up to each company's ultimate parent."""
 import re
+import unicodedata
 
 UK_WORDS = ("england", "wales", "scotland", "northern ireland", "united kingdom", "uk", "great britain")
 UK_PLACES = ("companies house", "register of companies", "registrar of companies")
@@ -16,6 +17,34 @@ CONTROL_RANK = [
 ]
 
 MAX_DEPTH = 12
+
+TITLES = {"mr", "mrs", "ms", "miss", "dr", "sir", "dame", "prof", "lord", "lady", "jr", "sr"}
+COMPANY_WORDS = {"the", "inc", "incorporated", "ltd", "limited", "plc", "llc", "llp", "lp", "l", "p", "sarl", "s", "a",
+                 "r", "sa", "bv", "nv", "ua", "u", "cooperatief", "corp", "corporation", "co", "group", "holdings", "gmbh", "ag"}
+
+
+def _plain(text):
+    text = unicodedata.normalize("NFKD", text or "").encode("ascii", "ignore").decode()
+    return re.findall(r"[a-z0-9]+", text.lower())
+
+
+def owner_key(result):
+    """A key that is the same for every company with the same ultimate owner.
+
+    People are matched on first name + surname + country, so 'Mr Andreas Oulie' and
+    'Mr Andreas Søtvedt Oulie' in Norway end up together. Companies are matched on their
+    name with legal suffixes removed. Anything with no owner above it is keyed on its UK parent.
+    """
+    top = result["top"]
+    if top["type"] == "individual":
+        words = [w for w in _plain(top["name"]) if w not in TITLES]
+        if len(words) >= 2:
+            return "person:" + " ".join([words[0], words[-1]]) + ":" + " ".join(_plain(top["country"]))
+    if top["type"] in ("foreign company", "legal person", "UK company (number missing)"):
+        words = [w for w in _plain(top["name"]) if w not in COMPANY_WORDS]
+        if words:
+            return "company:" + " ".join(words)
+    return "uk:" + result["ultimate_uk"]["number"]
 
 
 def normalise_number(raw):

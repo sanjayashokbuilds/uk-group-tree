@@ -11,7 +11,7 @@ import sys
 from collections import defaultdict
 
 from .ch import CompaniesHouse
-from .tree import normalise_number, walk_up
+from .tree import normalise_number, owner_key, walk_up
 
 
 def resolve(ch, row):
@@ -59,26 +59,32 @@ def main():
         r["note"] = note
         results.append(r)
 
-    write_csv(results, os.path.join(args.out, "families.csv"))
-    write_tree(results, os.path.join(args.out, "families.md"))
     groups = group_by_parent(results)
+    write_csv(results, os.path.join(args.out, "families.csv"))
+    write_tree(groups, os.path.join(args.out, "families.md"))
     shared = sum(1 for m in groups.values() if len(m) > 1)
     print(f"\nDone. {len(results)} companies, {len(groups)} families, {shared} families with 2+ of your companies.")
     print(f"See {args.out}/families.csv and {args.out}/families.md")
 
 
 def group_by_parent(results):
+    """Group companies by ultimate owner (see owner_key), so the same owner under
+    slightly different names, or behind different UK holding companies, is one family."""
     groups = defaultdict(list)
     for r in results:
         if r.get("chain"):
-            groups[r["ultimate_uk"]["number"]].append(r)
+            r["family_key"] = owner_key(r)
+            groups[r["family_key"]].append(r)
+    for members in groups.values():
+        for m in members:
+            m["family_size"] = len(members)
     return groups
 
 
 def write_csv(results, path):
     cols = ["input", "company_number", "company_name", "status", "immediate_parent", "immediate_parent_number",
             "ultimate_uk_parent", "ultimate_uk_parent_number", "top_of_chain_type", "top_of_chain_name",
-            "top_of_chain_country", "depth", "chain", "flags", "note"]
+            "top_of_chain_country", "family_key", "family_size", "depth", "chain", "flags", "note"]
     with open(path, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=cols)
         w.writeheader()
@@ -100,6 +106,8 @@ def write_csv(results, path):
                 "top_of_chain_type": r["top"]["type"],
                 "top_of_chain_name": r["top"]["name"],
                 "top_of_chain_country": r["top"]["country"],
+                "family_key": r.get("family_key", ""),
+                "family_size": r.get("family_size", ""),
                 "depth": len(chain) - 1,
                 "chain": " > ".join(c["name"] for c in chain),
                 "flags": "; ".join(r["flags"]),
@@ -107,19 +115,25 @@ def write_csv(results, path):
             })
 
 
-def write_tree(results, path):
-    groups = group_by_parent(results)
+def write_tree(groups, path):
     order = sorted(groups.items(), key=lambda kv: -len(kv[1]))
     lines = ["# Corporate families", ""]
-    for number, members in order:
-        top = members[0]
-        head = top["ultimate_uk"]["name"]
-        above = top["top"]
-        lines.append(f"## {head} ({number})")
-        if above["name"]:
-            lines.append(f"Controlled by: {above['name']} ({above['type']}{', ' + above['country'] if above['country'] else ''})")
-        else:
+    for key, members in order:
+        first = members[0]
+        above = first["top"]
+        if key.startswith("uk:"):
+            lines.append(f"## {first['ultimate_uk']['name']} ({first['ultimate_uk']['number']})")
             lines.append(f"Top of chain: {above['type']}")
+        else:
+            lines.append(f"## {above['name']}")
+            where = f", {above['country']}" if above["country"] else ""
+            lines.append(f"Ultimate owner: {above['type']}{where}")
+            names = sorted({m["top"]["name"] for m in members})
+            if len(names) > 1:
+                lines.append("Same owner recorded under different names: " + " / ".join(names) + " (matched on name, worth a check)")
+            uk_parents = sorted({m["ultimate_uk"]["name"] for m in members})
+            if len(uk_parents) > 1:
+                lines.append("Reached through separate UK holding companies: " + ", ".join(uk_parents))
         lines.append("")
         for m in members:
             path_names = [c["name"] for c in reversed(m["chain"])]

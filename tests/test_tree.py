@@ -1,4 +1,21 @@
-from grouptree.tree import is_uk_registered, normalise_number, pick_parent, walk_up
+from grouptree.tree import is_uk_registered, normalise_number, owner_key, pick_parent, walk_up
+
+
+def _result(top_type, name, country, uk_no="00000001"):
+    return {"top": {"type": top_type, "name": name, "country": country}, "ultimate_uk": {"number": uk_no, "name": "X"}}
+
+
+def test_owner_key_merges_name_variants():
+    a = owner_key(_result("individual", "Mr Andreas Oulie", "Norway", "1"))
+    b = owner_key(_result("individual", "Mr Andreas Søtvedt Oulie", "Norway", "2"))
+    assert a == b
+    assert owner_key(_result("individual", "Mr Andreas Oulie", "England")) != a
+
+
+def test_owner_key_companies_and_standalone():
+    assert owner_key(_result("foreign company", "The Goldman Sachs Group, Inc.", "Delaware")) == \
+        owner_key(_result("foreign company", "Goldman Sachs Group Inc", "USA"))
+    assert owner_key(_result("standalone (no corporate parent)", "", "", "123")) == "uk:123"
 
 
 class FakeCH:
